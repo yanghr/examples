@@ -19,6 +19,7 @@ import torchvision.models as models
 from torch.autograd import Variable
 import util
 
+os.makedirs('saves', exist_ok=True)
 warnings.filterwarnings("ignore")
 
 model_names = sorted(name for name in models.__dict__

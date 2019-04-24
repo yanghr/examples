@@ -5,6 +5,8 @@ import shutil
 import time
 import warnings
 import numpy as np
+import sys
+
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -38,7 +40,7 @@ parser.add_argument('--reg', type=int, default=0, metavar='R',
                     help='regularization type: 0 L2 1 L1 2 L1/L2')
 parser.add_argument('--decay', type=float, default=0.001, metavar='D',
                     help='weight decay (default: 0.01)')                                           
-parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
+parser.add_argument('-j', '--workers', default=16, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
 parser.add_argument('--epochs', default=45, type=int, metavar='N',
                     help='number of total epochs to run')
@@ -196,17 +198,7 @@ def main():
 
         # evaluate on validation set
         prec1 = validate(val_loader, model, criterion)
-        torch.save(model.state_dict(), 'saves/elt_s_'+str(args.decay)+'_'+str(args.reg)+'.pth')
-#        # remember best prec@1 and save checkpoint
-#        is_best = prec1 > best_prec1
-#        best_prec1 = max(prec1, best_prec1)
-#        save_checkpoint({
-#            'epoch': epoch + 1,
-#            'arch': args.arch,
-#            'state_dict': model.state_dict(),
-#            'best_prec1': best_prec1,
-#            'optimizer' : optimizer.state_dict(),
-#        }, is_best)
+        torch.save(model.state_dict(), 'saves/str_'+str(args.decay)+'_'+str(args.reg)+'.pth')
 
 
 def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay):
@@ -234,14 +226,14 @@ def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay):
 
         reg = 0.0
         if decay:
-            for param in model.parameters():
-                if param.requires_grad:
+            for name, param in model.named_parameters():
+                if param.requires_grad and 'weight' in name:
                     if reg_type==2:
-                        reg += torch.sum(torch.abs(param))/torch.sqrt(torch.sum(param**2))-1
+                        reg += (torch.sum(torch.sqrt(torch.sum(param**2,0)))+torch.sum(torch.sqrt(torch.sum(param**2,1))))/torch.sqrt(torch.sum(param**2))-2
                     elif reg_type==3:
-                        reg += (torch.sum(torch.abs(param))**2)/torch.sum(param**2)-1    
+                        reg += ( (torch.sum(torch.sqrt(torch.sum(param**2,0)))**2) + (torch.sum(torch.sqrt(torch.sum(param**2,1)))**2) )/torch.sum(param**2)-2    
                     elif reg_type==1:    
-                        reg += torch.sum(torch.abs(param))
+                        reg += torch.sum(torch.sqrt(torch.sum(param**2,0)))+torch.sum(torch.sqrt(torch.sum(param**2,1)))
                     else:
                         reg = 0.0         
         total_loss = loss+decay*reg
