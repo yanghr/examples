@@ -19,12 +19,18 @@ import torchvision.models as models
 from torch.autograd import Variable
 import util
 
-warnings.filterwarnings("ignore")
-
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
 
+import torch.nn.functional as F
+from tqdm import tqdm
+
+warnings.filterwarnings("ignore")
+
+os.makedirs('saves', exist_ok=True)
+
+# Training settings
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('data', metavar='DIR',
                     help='path to dataset')
@@ -32,14 +38,10 @@ parser.add_argument('--arch', '-a', metavar='ARCH', default='alexnet',
                     choices=model_names,
                     help='model architecture: ' +
                         ' | '.join(model_names) +
-                        ' (default: resnet18)')
-parser.add_argument('--reg', type=int, default=0, metavar='R',
-                    help='regularization type: 0 L2 1 L1 2 L1/L2')
-parser.add_argument('--decay', type=float, default=0.001, metavar='D',
-                    help='weight decay (default: 0.01)')                                           
+                        ' (default: resnet18)')                               
 parser.add_argument('-j', '--workers', default=16, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
-parser.add_argument('--epochs', default=45, type=int, metavar='N',
+parser.add_argument('--epochs', default=30, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
@@ -53,7 +55,7 @@ parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
                     metavar='W', help='weight decay (default: 1e-4)')
 parser.add_argument('--print-freq', '-p', default=100, type=int,
                     metavar='N', help='print frequency (default: 10)')
-parser.add_argument('--resume', default='', type=str, metavar='PATH',
+parser.add_argument('--resume', default='saves/elt_0.0_0', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
@@ -69,9 +71,10 @@ parser.add_argument('--seed', default=None, type=int,
                     help='seed for initializing training. ')
 parser.add_argument('--gpu', default=None, type=int,
                     help='GPU id to use.')
+parser.add_argument('--sensitivity', type=float, default=0.25,
+                    help="sensitivity value that is multiplied to layer's std in order to get threshold value")
 
 best_prec1 = 0
-
 
 def main():
     global args, best_prec1
@@ -124,22 +127,8 @@ def main():
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
     
-    print(model)
-    util.print_model_parameters(model)
-
-    # optionally resume from a checkpoint
-    if args.resume:
-        if os.path.isfile(args.resume):
-            print("=> loading checkpoint '{}'".format(args.resume))
-            checkpoint = torch.load(args.resume)
-            args.start_epoch = checkpoint['epoch']
-            best_prec1 = checkpoint['best_prec1']
-            model.load_state_dict(checkpoint['state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            print("=> loaded checkpoint '{}' (epoch {})"
-                  .format(args.resume, checkpoint['epoch']))
-        else:
-            print("=> no checkpoint found at '{}'".format(args.resume))
+    if args.pretrained is None:
+        model.load_state_dict(torch.load(args.resume+'.pth'))
 
     cudnn.benchmark = True
 
@@ -181,9 +170,29 @@ def main():
         validate(val_loader, model, criterion)
         return
 
-    #if args.pretrained:
-    #    print('Pretrained model evaluation...')
-    #    validate(val_loader, model, criterion)
+#    if args.pretrained:
+#        print('Pretrained model evaluation...')
+#        validate(val_loader, model, criterion)
+        
+    device = torch.device("cuda")    
+    # Initial training
+    print("--- Pruning ---")
+    for name, p in model.named_parameters():
+        if 'weight' in name:
+            tensor = p.data.cpu().numpy()
+            threshold = np.std(tensor) * args.sensitivity
+            print(f'Pruning with threshold : {threshold} for layer {name}')
+            new_mask = np.where(abs(tensor) < threshold, 0, tensor)
+            p.data = torch.from_numpy(new_mask).to(device)        
+
+    util.print_nonzeros(model)
+    print('Pruned model evaluation...')
+    prec1 = validate(val_loader, model, criterion)
+    
+    best_prec1 = prec1
+    torch.save(model.state_dict(), args.resume+'_V_'+str(args.sensitivity)+'.pth')
+
+    print("--- Finetuning ---")
 
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
@@ -191,24 +200,21 @@ def main():
         adjust_learning_rate(optimizer, epoch)
 
         # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch, args.reg, args.decay)
+        train(train_loader, model, criterion, optimizer, epoch)
 
         # evaluate on validation set
         prec1 = validate(val_loader, model, criterion)
-        torch.save(model.state_dict(), 'saves/elt_'+str(args.decay)+'_'+str(args.reg)+'.pth')
-#        # remember best prec@1 and save checkpoint
-#        is_best = prec1 > best_prec1
-#        best_prec1 = max(prec1, best_prec1)
-#        save_checkpoint({
-#            'epoch': epoch + 1,
-#            'arch': args.arch,
-#            'state_dict': model.state_dict(),
-#            'best_prec1': best_prec1,
-#            'optimizer' : optimizer.state_dict(),
-#        }, is_best)
+        if prec1 > best_prec1:
+            torch.save(model.state_dict(), args.resume+'_V_'+str(args.sensitivity)+'.pth')
+            best_prec1 = prec1
+            print('New best performance')
+            
+    print("--- Evaluating ---")        
+    model.load_state_dict(torch.load(args.resume+'_V_'+str(args.sensitivity)+'.pth'))
+    prec1 = validate(val_loader, model, criterion)
 
 
-def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay):
+def train(train_loader, model, criterion, optimizer, epoch):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -231,20 +237,6 @@ def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay):
         output = model(input)
         loss = criterion(output, target)
 
-        reg = 0.0
-        if decay:
-            for param in model.parameters():
-                if param.requires_grad:
-                    if reg_type==2:
-                        reg += torch.sum(torch.abs(param))/torch.sqrt(torch.sum(param**2))-1
-                    elif reg_type==3:
-                        reg += (torch.sum(torch.abs(param))**2)/torch.sum(param**2)-1    
-                    elif reg_type==1:    
-                        reg += torch.sum(torch.abs(param))
-                    else:
-                        reg = 0.0         
-        total_loss = loss+decay*reg
-
         # measure accuracy and record loss
         prec1, prec5 = accuracy(output, target, topk=(1, 5))
         losses.update(loss.item(), input.size(0))
@@ -253,7 +245,16 @@ def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay):
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
-        total_loss.backward()
+        loss.backward()
+        device = torch.device("cuda") 
+        for name, p in model.named_parameters():
+            if 'mask' in name:
+                continue
+            tensor = p.data.cpu().numpy()
+            grad_tensor = p.grad.data.cpu().numpy()
+            grad_tensor = np.where(tensor==0, 0, grad_tensor)
+            p.grad.data = torch.from_numpy(grad_tensor).to(device)
+        
         optimizer.step()
 
         # measure elapsed time
@@ -265,11 +266,10 @@ def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay):
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
                   'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                  'Reg {reg:.4f}\t'
                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
                   'Prec@5 {top5.val:.3f} ({top5.avg:.3f})'.format(
                    epoch, i, len(train_loader), batch_time=batch_time,
-                   data_time=data_time, loss=losses, reg=reg, top1=top1, top5=top5))
+                   data_time=data_time, loss=losses, top1=top1, top5=top5))
 
 
 def validate(val_loader, model, criterion):
