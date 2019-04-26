@@ -84,7 +84,7 @@ global args, best_prec1, save_path
 args = parser.parse_args()
 best_prec1 = 0
 
-save_path = os.path.join('./results_'+str(args.arch)+'_'+str(args.decay)+'_'+str(args.reg), datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+save_path = os.path.join('./results', str(args.arch)+'_'+str(args.decay)+'_'+str(args.reg), datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
 if not os.path.exists(save_path):
     os.makedirs(save_path)
 else:
