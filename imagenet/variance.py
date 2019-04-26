@@ -71,8 +71,8 @@ parser.add_argument('--seed', default=None, type=int,
                     help='seed for initializing training. ')
 parser.add_argument('--gpu', default=None, type=int,
                     help='GPU id to use.')
-parser.add_argument('--sensitivity', type=float, default=0.25,
-                    help="sensitivity value that is multiplied to layer's std in order to get threshold value")
+parser.add_argument('--sensitivity', type=float, default=1e-4,
+                    help="sensitivity value that is used as threshold value for sparsity estimation")
 
 best_prec1 = 0
 
@@ -180,8 +180,8 @@ def main():
     for name, p in model.named_parameters():
         if 'weight' in name:
             tensor = p.data.cpu().numpy()
-            threshold = np.std(tensor) * args.sensitivity
-            print(f'Pruning with threshold : {threshold} for layer {name}')
+            threshold = args.sensitivity #np.std(tensor) * args.sensitivity
+            #print(f'Pruning with threshold : {threshold} for layer {name}')
             new_mask = np.where(abs(tensor) < threshold, 0, tensor)
             p.data = torch.from_numpy(new_mask).to(device)        
 
