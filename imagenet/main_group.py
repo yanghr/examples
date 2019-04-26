@@ -7,6 +7,11 @@ import warnings
 import numpy as np
 import sys
 
+import matplotlib
+matplotlib.use("pdf")
+import matplotlib.pyplot as plt
+from datetime import datetime
+
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -72,13 +77,21 @@ parser.add_argument('--seed', default=None, type=int,
                     help='seed for initializing training. ')
 parser.add_argument('--gpu', default=None, type=int,
                     help='GPU id to use.')
+parser.add_argument('--sensitivity', type=float, default=1e-4,
+                    help="sensitivity value that is used as threshold value for sparsity estimation")                    
 
+global args, best_prec1, save_path
+args = parser.parse_args()
 best_prec1 = 0
+
+save_path = os.path.join('./results_'+str(args.arch)+'_'+str(args.decay)+'_'+str(args.reg), datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+if not os.path.exists(save_path):
+    os.makedirs(save_path)
+else:
+    raise OSError('Directory {%s} exists. Use a new one.' % save_path)
 
 
 def main():
-    global args, best_prec1
-    args = parser.parse_args()
 
     if args.seed is not None:
         random.seed(args.seed)
@@ -188,20 +201,90 @@ def main():
     #    print('Pretrained model evaluation...')
     #    validate(val_loader, model, criterion)
 
+    curves = np.zeros(((args.epochs-args.start_epoch)*(len(train_loader)//args.print_freq),6))
+    valid = np.zeros(((args.epochs-args.start_epoch),3))
+    step = 0
+
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             train_sampler.set_epoch(epoch)
         adjust_learning_rate(optimizer, epoch)
 
         # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch, args.reg, args.decay)
+        curves,step = train(train_loader, model, criterion, optimizer, epoch, args.reg, args.decay, curves, step)
 
         # evaluate on validation set
-        prec1 = validate(val_loader, model, criterion)
+        valid[epoch, 0] = epoch
+        valid[epoch, 1], valid[epoch, 2] = validate(val_loader, model, criterion)
+        
+        # plot training curve
+        np.savetxt(os.path.join(save_path, 'curves.dat'), curves)
+        
+        clr1 = (0.5, 0., 0.)
+        clr2 = (0.0, 0.5, 0.)
+        fig, ax1 = plt.subplots()
+        fig2, ax3 = plt.subplots()
+        ax2 = ax1.twinx()
+        ax4 = ax3.twinx()
+        ax1.set_xlabel('steps')
+        ax1.set_ylabel('Loss', color=clr1)
+        ax1.tick_params(axis='y', colors=clr1)
+        ax2.set_ylabel('Reg', color=clr2)
+        ax2.tick_params(axis='y', colors=clr2)
+        
+        ax3.set_xlabel('steps')
+        ax3.set_ylabel('Elt_sparsity', color=clr1)
+        ax3.tick_params(axis='y', colors=clr1)
+        ax4.set_ylabel('Str_sparsity', color=clr2)
+        ax4.tick_params(axis='y', colors=clr2)
+        
+        start = 0
+        end = step
+        markersize = 12
+        coef = 2.
+        ax1.plot(curves[start:end, 0], curves[start:end, 1], '--', color=[c*coef for c in clr1], markersize=markersize)
+        ax2.plot(curves[start:end, 0], curves[start:end, 2], '-', color=[c*coef for c in clr2], markersize=markersize)
+        ax3.plot(curves[start:end, 0], curves[start:end, 3], '--', color=[c * coef for c in clr1], markersize=markersize)
+        ax4.plot(curves[start:end, 0], curves[start:end, 4], '-', color=[c * coef for c in clr2], markersize=markersize)
+        
+        #ax2.set_ylim(bottom=20, top=100)
+        ax1.legend(('Train loss'), loc='lower right')
+        ax2.legend(('Train reg'), loc='lower left')
+        fig.savefig(os.path.join(save_path, 'loss-vs-steps.pdf'))
+        
+        #ax4.set_ylim(bottom=20, top=100)
+        ax3.legend(('Elt_sparsity'), loc='lower right')
+        ax4.legend(('Str_sparsity'), loc='lower left')
+        fig2.savefig(os.path.join(save_path, 'sparsity-vs-steps.pdf'))
+        
+        # plot validation curve
+        np.savetxt(os.path.join(save_path, 'valid.dat'), valid)
+        
+        fig3, ax5 = plt.subplots()
+        ax6 = ax5.twinx()
+        ax5.set_xlabel('epochs')
+        ax5.set_ylabel('Acc@1', color=clr1)
+        ax5.tick_params(axis='y', colors=clr1)
+        ax6.set_ylabel('Acc@5', color=clr2)
+        ax6.tick_params(axis='y', colors=clr2)
+        
+        start = 0
+        end = epoch+1
+        markersize = 12
+        coef = 2.
+        ax5.plot(valid[start:end, 0], valid[start:end, 1], '--', color=[c*coef for c in clr1], markersize=markersize)
+        ax6.plot(valid[start:end, 0], valid[start:end, 2], '-', color=[c*coef for c in clr2], markersize=markersize)
+        
+        #ax2.set_ylim(bottom=20, top=100)
+        ax5.legend(('Acc@1'), loc='lower right')
+        ax6.legend(('Acc@5'), loc='lower left')
+        fig3.savefig(os.path.join(save_path, 'accuracy-vs-epochs.pdf'))
+        
         torch.save(model.state_dict(), 'saves/str_'+str(args.decay)+'_'+str(args.reg)+'.pth')
 
 
-def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay):
+def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay, curves, step):
+    device = torch.device("cuda")
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -227,7 +310,7 @@ def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay):
         reg = 0.0
         if decay:
             for name, param in model.named_parameters():
-                if param.requires_grad and 'weight' in name:
+                if param.requires_grad and len(list(param.size()))>1 and 'weight' in name:
                     if reg_type==2:
                         reg += (torch.sum(torch.sqrt(torch.sum(param**2,0)))+torch.sum(torch.sqrt(torch.sum(param**2,1))))/torch.sqrt(torch.sum(param**2))-2
                     elif reg_type==3:
@@ -254,16 +337,51 @@ def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay):
         end = time.time()
         #break
         if i % args.print_freq == 0:
+            nonzero = total = 0
+            comp_count = comp_total = 0
+            for name, p in model.named_parameters():
+                if 'weight' in name:
+                    tensor = p.data.cpu().numpy()
+                    threshold = args.sensitivity
+                    new_mask = np.where(abs(tensor) < threshold, 0, tensor)
+                    tensor = np.abs(new_mask)
+                    nz_count = np.count_nonzero(tensor)
+                    total_params = np.prod(tensor.shape)
+                    nonzero += nz_count
+                    total += total_params
+                    
+                    if len(tensor.shape)==4:
+                        dim0 = np.sum(np.sum(tensor, axis=0),axis=(1,2))
+                        dim1 = np.sum(np.sum(tensor, axis=1),axis=(1,2))
+                    if len(tensor.shape)==2:
+                        dim0 = np.sum(tensor, axis=0)
+                        dim1 = np.sum(tensor, axis=1)
+                    nz_count0 = np.count_nonzero(dim0)
+                    nz_count1 = np.count_nonzero(dim1)
+                    comp_count += nz_count0*nz_count1
+                    comp_total += len(dim0)*len(dim1) 
+                    
+            elt_sparsity = (total-nonzero)/total
+            str_sparsity = (comp_total-comp_count)/comp_total
+            
+            curves[step, 0] = step*args.print_freq
+            curves[step, 1] = losses.avg
+            curves[step, 2] = reg
+            curves[step, 3] = elt_sparsity
+            curves[step, 4] = str_sparsity
+            
+            step += 1        
             print('Epoch: [{0}][{1}/{2}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
                   'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
                   'Reg {reg:.4f}\t'
                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-                  'Prec@5 {top5.val:.3f} ({top5.avg:.3f})'.format(
+                  'Prec@5 {top5.val:.3f} ({top5.avg:.3f})\t Sparsity {elt_sparsity:.3f} {str_sparsity:.3f}'.format(
                    epoch, i, len(train_loader), batch_time=batch_time,
-                   data_time=data_time, loss=losses, reg=reg, top1=top1, top5=top5))
-
+                   data_time=data_time, loss=losses, reg=reg, top1=top1, top5=top5, elt_sparsity=elt_sparsity, str_sparsity=str_sparsity))
+                   
+    return curves, step
 
 def validate(val_loader, model, criterion):
     batch_time = AverageMeter()
@@ -309,7 +427,7 @@ def validate(val_loader, model, criterion):
         print(' * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f}'
               .format(top1=top1, top5=top5))
 
-    return top1.avg
+    return top1.avg, top5.avg
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
