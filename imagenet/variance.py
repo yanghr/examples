@@ -5,6 +5,9 @@ import shutil
 import time
 import warnings
 import numpy as np
+import sys
+sys.path.append('/home/hy128/github/vision/')
+
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -13,9 +16,9 @@ import torch.distributed as dist
 import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
-import torchvision.transforms as transforms
-import torchvision.datasets as datasets
-import torchvision.models as models
+import torchvision_new.transforms as transforms
+import torchvision_new.datasets as datasets
+import torchvision_new.models as models
 from torch.autograd import Variable
 import util
 
@@ -45,7 +48,7 @@ parser.add_argument('--epochs', default=30, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('-b', '--batch-size', default=1024, type=int,
+parser.add_argument('-b', '--batch-size', default=256, type=int,
                     metavar='N', help='mini-batch size (default: 256)')
 parser.add_argument('--lr', '--learning-rate', default=0.001, type=float,
                     metavar='LR', help='initial learning rate')
@@ -72,7 +75,7 @@ parser.add_argument('--seed', default=None, type=int,
 parser.add_argument('--gpu', default=None, type=int,
                     help='GPU id to use.')
 parser.add_argument('--sensitivity', type=float, default=1e-4,
-                    help="sensitivity value that is used as threshold value for sparsity estimation")
+                    help="sensitivity value that is used as threshold value")
 
 best_prec1 = 0
 
@@ -127,8 +130,9 @@ def main():
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
     
-    if args.pretrained is None:
+    if args.pretrained is not True:
         model.load_state_dict(torch.load(args.resume+'.pth'))
+        print('model loaded')
 
     cudnn.benchmark = True
 
@@ -141,7 +145,7 @@ def main():
     train_dataset = datasets.ImageFolder(
         traindir,
         transforms.Compose([
-            transforms.RandomResizedCrop(224),
+            transforms.RandomResizedCrop(227),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             normalize,
@@ -159,7 +163,7 @@ def main():
     val_loader = torch.utils.data.DataLoader(
         datasets.ImageFolder(valdir, transforms.Compose([
             transforms.Resize(256),
-            transforms.CenterCrop(224),
+            transforms.CenterCrop(227),
             transforms.ToTensor(),
             normalize,
         ])),
@@ -205,7 +209,7 @@ def main():
         # evaluate on validation set
         prec1 = validate(val_loader, model, criterion)
         if prec1 > best_prec1:
-            torch.save(model.state_dict(), args.resume+'_V_'+str(args.sensitivity)+'.pth')
+            torch.save(model.state_dict(), args.resume+'_T_'+str(args.sensitivity)+'.pth')
             best_prec1 = prec1
             print('New best performance')
             
