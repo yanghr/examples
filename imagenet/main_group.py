@@ -244,8 +244,9 @@ def main():
         coef = 2.
         ax1.plot(curves[start:end, 0], curves[start:end, 1], '--', color=[c*coef for c in clr1], markersize=markersize)
         ax2.plot(curves[start:end, 0], curves[start:end, 2], '-', color=[c*coef for c in clr2], markersize=markersize)
-        ax3.plot(curves[start:end, 0], curves[start:end, 3], '--', color=[c * coef for c in clr1], markersize=markersize)
-        ax4.plot(curves[start:end, 0], curves[start:end, 4], '-', color=[c * coef for c in clr2], markersize=markersize)
+        ax3.plot(curves[start:end, 0], curves[start:end, 3], '--', color=[c*coef for c in clr1], markersize=markersize)
+        ax4.plot(curves[start:end, 0], curves[start:end, 4], '-', color=[c*coef for c in clr2], markersize=markersize)
+        ax4.plot(curves[start:end, 0], curves[start:end, 5], '-', color=[c*1. for c in clr2], markersize=markersize)
         
         #ax2.set_ylim(bottom=20, top=100)
         ax1.legend(('Train loss'), loc='lower right')
@@ -254,7 +255,7 @@ def main():
         
         #ax4.set_ylim(bottom=20, top=100)
         ax3.legend(('Elt_sparsity'), loc='lower right')
-        ax4.legend(('Str_sparsity'), loc='lower left')
+        ax4.legend(('Input_sparsity','Output_sparsity'), loc='lower left')
         fig2.savefig(os.path.join(save_path, 'sparsity-vs-steps.pdf'))
         
         # plot validation curve
@@ -336,9 +337,10 @@ def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay, cur
         batch_time.update(time.time() - end)
         end = time.time()
         #break
-        if i % args.print_freq == 0:
+        if i and i % args.print_freq == 0:
             nonzero = total = 0
-            comp_count = comp_total = 0
+            input_count = input_total = 0
+            output_count = output_total = 0
             for name, p in model.named_parameters():
                 if 'weight' in name:
                     tensor = p.data.cpu().numpy()
@@ -358,17 +360,21 @@ def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay, cur
                         dim1 = np.sum(tensor, axis=1)
                     nz_count0 = np.count_nonzero(dim0)
                     nz_count1 = np.count_nonzero(dim1)
-                    comp_count += nz_count0*nz_count1
-                    comp_total += len(dim0)*len(dim1) 
+                    input_count += nz_count0
+                    output_count += nz_count1
+                    input_total += len(dim0)
+                    output_total += len(dim1) 
                     
             elt_sparsity = (total-nonzero)/total
-            str_sparsity = (comp_total-comp_count)/comp_total
+            input_sparsity = (input_total-input_count)/input_total
+            output_sparsity = (output_total-output_count)/output_total
             
-            curves[step, 0] = step*args.print_freq
+            curves[step, 0] = len(train_loader)*epoch+i
             curves[step, 1] = losses.avg
             curves[step, 2] = reg
             curves[step, 3] = elt_sparsity
-            curves[step, 4] = str_sparsity
+            curves[step, 4] = input_sparsity
+            curves[step, 5] = output_sparsity
             
             step += 1        
             print('Epoch: [{0}][{1}/{2}]\t'
@@ -377,9 +383,9 @@ def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay, cur
                   'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
                   'Reg {reg:.4f}\t'
                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-                  'Prec@5 {top5.val:.3f} ({top5.avg:.3f})\t Sparsity {elt_sparsity:.3f} {str_sparsity:.3f}'.format(
+                  'Prec@5 {top5.val:.3f} ({top5.avg:.3f})\t Sparsity elt: {elt_sparsity:.3f} str: {input_sparsity:.3f}, {output_sparsity:.3f}'.format(
                    epoch, i, len(train_loader), batch_time=batch_time,
-                   data_time=data_time, loss=losses, reg=reg, top1=top1, top5=top5, elt_sparsity=elt_sparsity, str_sparsity=str_sparsity))
+                   data_time=data_time, loss=losses, reg=reg, top1=top1, top5=top5, elt_sparsity=elt_sparsity, input_sparsity=input_sparsity, output_sparsity=output_sparsity))
                    
     return curves, step
 
