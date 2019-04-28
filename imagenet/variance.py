@@ -6,7 +6,7 @@ import time
 import warnings
 import numpy as np
 import sys
-sys.path.append('/home/hy128/github/vision/')
+#sys.path.append('/home/hy128/github/vision/')
 
 import torch
 import torch.nn as nn
@@ -16,9 +16,9 @@ import torch.distributed as dist
 import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
-import torchvision_new.transforms as transforms
-import torchvision_new.datasets as datasets
-import torchvision_new.models as models
+import torchvision.transforms as transforms
+import torchvision.datasets as datasets
+import torchvision.models as models
 from torch.autograd import Variable
 import util
 
