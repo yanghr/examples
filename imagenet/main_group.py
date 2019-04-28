@@ -12,6 +12,8 @@ matplotlib.use("pdf")
 import matplotlib.pyplot as plt
 from datetime import datetime
 
+import logging
+
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -26,7 +28,7 @@ import torchvision.models as models
 from torch.autograd import Variable
 import util
 
-os.makedirs('saves', exist_ok=True)
+#os.makedirs('saves', exist_ok=True)
 warnings.filterwarnings("ignore")
 
 model_names = sorted(name for name in models.__dict__
@@ -91,6 +93,13 @@ else:
     raise OSError('Directory {%s} exists. Use a new one.' % save_path)
 
 
+logging.basicConfig(filename=os.path.join(save_path, 'log.txt'), level=logging.INFO)
+logger = logging.getLogger('main')
+logger.addHandler(logging.StreamHandler())
+logger.info("Saving to %s", save_path)
+logger.info("Running arguments: %s", args)
+
+
 def main():
 
     if args.seed is not None:
@@ -140,8 +149,8 @@ def main():
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
     
-    print(model)
-    util.print_model_parameters(model)
+    #print(model)
+    #util.print_model_parameters(model)
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -281,7 +290,7 @@ def main():
         ax6.legend(('Acc@5'), loc='lower left')
         fig3.savefig(os.path.join(save_path, 'accuracy-vs-epochs.pdf'))
         
-        torch.save(model.state_dict(), 'saves/str_'+str(args.decay)+'_'+str(args.reg)+'.pth')
+        torch.save(model.state_dict(), os.path.join(save_path, 'str_'+str(args.decay)+'_'+str(args.reg)+'.pth'))
 
 
 def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay, curves, step):
