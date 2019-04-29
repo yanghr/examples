@@ -13,6 +13,8 @@ matplotlib.use("pdf")
 import matplotlib.pyplot as plt
 from datetime import datetime
 
+import logging
+
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -90,6 +92,11 @@ if not os.path.exists(save_path):
 else:
     raise OSError('Directory {%s} exists. Use a new one.' % save_path)
 
+logging.basicConfig(filename=os.path.join(save_path, 'log.txt'), level=logging.INFO)
+logger = logging.getLogger('main')
+logger.addHandler(logging.StreamHandler())
+logger.info("Saving to %s", save_path)
+logger.info("Running arguments: %s", args)
 
 def main():
 
@@ -143,8 +150,8 @@ def main():
     #if args.pretrained and 'alexnet' in args.arch:
     #    model.load_state_dict(torch.load('saves/new_elt_0.0_0.pth'))
     
-    print(model)
-    util.print_model_parameters(model)
+    #print(model)
+    #util.print_model_parameters(model)
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -280,7 +287,7 @@ def main():
         ax6.legend(('Acc@5'), loc='lower left')
         fig3.savefig(os.path.join(save_path, 'accuracy-vs-epochs.pdf'))
         
-        torch.save(model.state_dict(), 'saves/new_elt_'+str(args.decay)+'_'+str(args.reg)+'.pth')
+        torch.save(model.state_dict(), os.path.join(save_path, 'str_'+str(args.decay)+'_'+str(args.reg)+'.pth'))
 
 
 def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay, curves, step):
@@ -414,7 +421,7 @@ def validate(val_loader, model, criterion):
         print(' * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f}'
               .format(top1=top1, top5=top5))
 
-    return top1.avg
+    return top1.avg, top5.avg
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
