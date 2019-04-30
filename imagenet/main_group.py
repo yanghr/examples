@@ -259,8 +259,8 @@ def main():
         ax1.plot(curves[start:end, 0], curves[start:end, 1], '--', color=[c*coef for c in clr1], markersize=markersize)
         ax2.plot(curves[start:end, 0], curves[start:end, 6], '-', color=[c*coef for c in clr2], markersize=markersize)
         ax3.plot(curves[start:end, 0], curves[start:end, 3], '--', color=[c*1. for c in clr1], markersize=markersize)
-        ax3.plot(curves[start:end, 0], curves[start:end, 4], '-', color=[c*2. for c in clr2], markersize=markersize)
-        ax3.plot(curves[start:end, 0], curves[start:end, 5], '-', color=[c*3. for c in clr2], markersize=markersize)
+        ax3.plot(curves[start:end, 0], curves[start:end, 4], '-', color=[c*1.5 for c in clr2], markersize=markersize)
+        ax3.plot(curves[start:end, 0], curves[start:end, 5], '-', color=[c*2. for c in clr2], markersize=markersize)
         ax4.plot(curves[start:end, 0], curves[start:end, 2], '-', color=[c*coef for c in clr2], markersize=markersize)
         
         #ax2.set_ylim(bottom=20, top=100)
