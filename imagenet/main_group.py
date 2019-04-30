@@ -57,6 +57,10 @@ parser.add_argument('-b', '--batch-size', default=256, type=int,
                     metavar='N', help='mini-batch size (default: 256)')
 parser.add_argument('--lr', '--learning-rate', default=0.001, type=float,
                     metavar='LR', help='initial learning rate')
+parser.add_argument('--lr_decay', '--learning-rate-decay', default=0.1, type=float,
+                    metavar='LRD', help='learning rate decay')
+parser.add_argument('--lr_int', '--learning-rate-interval', default=30, type=int,
+                    metavar='LRI', help='learning rate decay interval')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum')
 parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
@@ -210,7 +214,7 @@ def main():
     #    print('Pretrained model evaluation...')
     #    validate(val_loader, model, criterion)
 
-    curves = np.zeros(((args.epochs-args.start_epoch)*(len(train_loader)//args.print_freq),6))
+    curves = np.zeros(((args.epochs-args.start_epoch)*(len(train_loader)//args.print_freq),7))
     valid = np.zeros(((args.epochs-args.start_epoch),3))
     step = 0
 
@@ -238,13 +242,14 @@ def main():
         ax1.set_xlabel('steps')
         ax1.set_ylabel('Loss', color=clr1)
         ax1.tick_params(axis='y', colors=clr1)
-        ax2.set_ylabel('Reg', color=clr2)
+        ax2.set_ylabel('Total loss', color=clr2)
         ax2.tick_params(axis='y', colors=clr2)
         
         ax3.set_xlabel('steps')
-        ax3.set_ylabel('Elt_sparsity', color=clr1)
+        ax3.set_ylabel('Sparsity', color=clr1)
         ax3.tick_params(axis='y', colors=clr1)
-        ax4.set_ylabel('Str_sparsity', color=clr2)
+        ax4.set_ylabel('Reg', color=clr2)
+        ax4.yscale('log')
         ax4.tick_params(axis='y', colors=clr2)
         
         start = 0
@@ -252,19 +257,20 @@ def main():
         markersize = 12
         coef = 2.
         ax1.plot(curves[start:end, 0], curves[start:end, 1], '--', color=[c*coef for c in clr1], markersize=markersize)
-        ax2.plot(curves[start:end, 0], curves[start:end, 2], '-', color=[c*coef for c in clr2], markersize=markersize)
-        ax3.plot(curves[start:end, 0], curves[start:end, 3], '--', color=[c*coef for c in clr1], markersize=markersize)
-        ax4.plot(curves[start:end, 0], curves[start:end, 4], '-', color=[c*coef for c in clr2], markersize=markersize)
-        ax4.plot(curves[start:end, 0], curves[start:end, 5], '-', color=[c*1. for c in clr2], markersize=markersize)
+        ax2.plot(curves[start:end, 0], curves[start:end, 6], '-', color=[c*coef for c in clr2], markersize=markersize)
+        ax3.plot(curves[start:end, 0], curves[start:end, 3], '--', color=[c*1. for c in clr1], markersize=markersize)
+        ax3.plot(curves[start:end, 0], curves[start:end, 4], '-', color=[c*2. for c in clr2], markersize=markersize)
+        ax3.plot(curves[start:end, 0], curves[start:end, 5], '-', color=[c*3. for c in clr2], markersize=markersize)
+        ax4.plot(curves[start:end, 0], curves[start:end, 2], '-', color=[c*coef for c in clr2], markersize=markersize)
         
         #ax2.set_ylim(bottom=20, top=100)
         ax1.legend(('Train loss'), loc='lower right')
-        ax2.legend(('Train reg'), loc='lower left')
+        ax2.legend(('Total loss'), loc='lower left')
         fig.savefig(os.path.join(save_path, 'loss-vs-steps.pdf'))
         
         #ax4.set_ylim(bottom=20, top=100)
-        ax3.legend(('Elt_sparsity'), loc='lower right')
-        ax4.legend(('Input_sparsity','Output_sparsity'), loc='lower left')
+        ax3.legend(('Elt_sparsity','Input_sparsity','Output_sparsity'), loc='lower right')
+        ax4.legend(('Reg'), loc='lower left')
         fig2.savefig(os.path.join(save_path, 'sparsity-vs-steps.pdf'))
         
         # plot validation curve
@@ -298,6 +304,7 @@ def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay, cur
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
+    total_losses = AverageMeter()
     top1 = AverageMeter()
     top5 = AverageMeter()
 
@@ -334,6 +341,7 @@ def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay, cur
         # measure accuracy and record loss
         prec1, prec5 = accuracy(output, target, topk=(1, 5))
         losses.update(loss.item(), input.size(0))
+        total_losses.update(total_loss.item(), input.size(0))
         top1.update(prec1[0], input.size(0))
         top5.update(prec5[0], input.size(0))
 
@@ -384,17 +392,20 @@ def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay, cur
             curves[step, 3] = elt_sparsity
             curves[step, 4] = input_sparsity
             curves[step, 5] = output_sparsity
+            curves[step, 6] = total_losses.avg
             
             step += 1        
             print('Epoch: [{0}][{1}/{2}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
                   'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
+                  'Total {total.val:.4f} ({total.avg:.4f})\t'
                   'Reg {reg:.4f}\t'
                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
                   'Prec@5 {top5.val:.3f} ({top5.avg:.3f})\t Sparsity elt: {elt_sparsity:.3f} str: {input_sparsity:.3f}, {output_sparsity:.3f}'.format(
                    epoch, i, len(train_loader), batch_time=batch_time,
-                   data_time=data_time, loss=losses, reg=reg, top1=top1, top5=top5, elt_sparsity=elt_sparsity, input_sparsity=input_sparsity, output_sparsity=output_sparsity))
+                   data_time=data_time, loss=losses, total=total_losses, 
+                   reg=reg, top1=top1, top5=top5, elt_sparsity=elt_sparsity, input_sparsity=input_sparsity, output_sparsity=output_sparsity))
                    
     return curves, step
 
@@ -471,7 +482,7 @@ class AverageMeter(object):
 
 def adjust_learning_rate(optimizer, epoch):
     """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
-    lr = args.lr * (0.1 ** (epoch // 30))
+    lr = args.lr * (args.lr_decay ** (epoch // args.lr_int))
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
