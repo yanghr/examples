@@ -249,7 +249,7 @@ def main():
         ax3.set_ylabel('Sparsity', color=clr1)
         ax3.tick_params(axis='y', colors=clr1)
         ax4.set_ylabel('Reg', color=clr2)
-        ax4.yscale('log')
+        #ax4.yscale('log')
         ax4.tick_params(axis='y', colors=clr2)
         
         start = 0
