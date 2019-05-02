@@ -90,16 +90,24 @@ global args, best_prec1, save_path
 args = parser.parse_args()
 best_prec1 = 0
 
-save_path = os.path.join('./results', str(args.arch)+'_'+str(args.decay)+'_'+str(args.reg), datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
-if not os.path.exists(save_path):
-    os.makedirs(save_path)
-else:
-    raise OSError('Directory {%s} exists. Use a new one.' % save_path)
+if args.resume:
+    if os.path.exists(args.resume):
+        save_path = args.resume
+        logging.basicConfig(filename=os.path.join(save_path, datetime.now().strftime('%Y-%m-%d_%H-%M-%S')+'log.txt'), level=logging.INFO)
+        logger = logging.getLogger('main')
+        logger.addHandler(logging.StreamHandler())
+    else:
+        print("=> no checkpoint found at '{}'".format(args.resume))
+else:        
+    save_path = os.path.join('./results', str(args.arch)+'_'+str(args.decay)+'_'+str(args.reg), datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+    else:
+        raise OSError('Directory {%s} exists. Use a new one.' % save_path)
+    logging.basicConfig(filename=os.path.join(save_path, 'log.txt'), level=logging.INFO)
+    logger = logging.getLogger('main')
+    logger.addHandler(logging.StreamHandler())
 
-
-logging.basicConfig(filename=os.path.join(save_path, 'log.txt'), level=logging.INFO)
-logger = logging.getLogger('main')
-logger.addHandler(logging.StreamHandler())
 logger.info("Saving to %s", save_path)
 logger.info("Running arguments: %s", args)
 
@@ -156,20 +164,6 @@ def main():
     #print(model)
     #util.print_model_parameters(model)
 
-    # optionally resume from a checkpoint
-    if args.resume:
-        if os.path.isfile(args.resume):
-            print("=> loading checkpoint '{}'".format(args.resume))
-            checkpoint = torch.load(args.resume)
-            args.start_epoch = checkpoint['epoch']
-            best_prec1 = checkpoint['best_prec1']
-            model.load_state_dict(checkpoint['state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            print("=> loaded checkpoint '{}' (epoch {})"
-                  .format(args.resume, checkpoint['epoch']))
-        else:
-            print("=> no checkpoint found at '{}'".format(args.resume))
-
     cudnn.benchmark = True
 
     # Data loading code
@@ -218,6 +212,20 @@ def main():
     valid = np.zeros(((args.epochs-args.start_epoch),3))
     step = 0
 
+    # optionally resume from a checkpoint
+    if args.resume:
+        if os.path.exists(args.resume):
+            logger.info("=> loading checkpoint '{}'".format(args.resume))
+            model.load_state_dict(torch.load(os.path.join(args.resume, 'model.pth')))
+            curves = np.loadtxt(os.path.join(args.resume, 'curves.dat'))
+            valid = np.loadtxt(os.path.join(args.resume, 'valid.dat'))
+            args.start_epoch = np.count_nonzero(valid[:,1])
+            step = args.start_epoch*(len(train_loader)//args.print_freq)
+            logger.info("=> loaded checkpoint '{}' (epoch {})"
+                  .format(args.resume, args.start_epoch))
+        else:
+            logger.info("=> no checkpoint found at '{}'".format(args.resume))
+
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             train_sampler.set_epoch(epoch)
@@ -259,8 +267,8 @@ def main():
         ax1.plot(curves[start:end, 0], curves[start:end, 1], '--', color=[c*coef for c in clr1], markersize=markersize)
         ax2.plot(curves[start:end, 0], curves[start:end, 6], '-', color=[c*coef for c in clr2], markersize=markersize)
         ax3.plot(curves[start:end, 0], curves[start:end, 3], '--', color=[c*1. for c in clr1], markersize=markersize)
-        ax3.plot(curves[start:end, 0], curves[start:end, 4], '-', color=[c*1.5 for c in clr2], markersize=markersize)
-        ax3.plot(curves[start:end, 0], curves[start:end, 5], '-', color=[c*2. for c in clr2], markersize=markersize)
+        ax3.plot(curves[start:end, 0], curves[start:end, 4], '-', color=[c*1.5 for c in clr1], markersize=markersize)
+        ax3.plot(curves[start:end, 0], curves[start:end, 5], '-', color=[c*2. for c in clr1], markersize=markersize)
         ax4.plot(curves[start:end, 0], curves[start:end, 2], '-', color=[c*coef for c in clr2], markersize=markersize)
         
         #ax2.set_ylim(bottom=20, top=100)
@@ -269,7 +277,7 @@ def main():
         fig.savefig(os.path.join(save_path, 'loss-vs-steps.pdf'))
         
         #ax4.set_ylim(bottom=20, top=100)
-        ax3.legend(('Elt_sparsity','Input_sparsity','Output_sparsity'), loc='lower right')
+        ax3.legend(('Elt_sparsity','Filter_sparsity','Average_sparsity'), loc='lower right')
         ax4.legend(('Reg'), loc='lower left')
         fig2.savefig(os.path.join(save_path, 'sparsity-vs-steps.pdf'))
         
@@ -296,7 +304,7 @@ def main():
         ax6.legend(('Acc@5'), loc='lower left')
         fig3.savefig(os.path.join(save_path, 'accuracy-vs-epochs.pdf'))
         
-        torch.save(model.state_dict(), os.path.join(save_path, 'str_'+str(args.decay)+'_'+str(args.reg)+'.pth'))
+        torch.save(model.state_dict(), os.path.join(save_path, 'model.pth'))
 
 
 def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay, curves, step):
@@ -356,8 +364,8 @@ def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay, cur
         #break
         if i and i % args.print_freq == 0:
             nonzero = total = 0
-            input_count = input_total = 0
-            output_count = output_total = 0
+            filter_count = filter_total = 0
+            total_sparsity = total_layer = 0
             for name, p in model.named_parameters():
                 if 'weight' in name:
                     tensor = p.data.cpu().numpy()
@@ -377,14 +385,14 @@ def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay, cur
                         dim1 = np.sum(tensor, axis=1)
                     nz_count0 = np.count_nonzero(dim0)
                     nz_count1 = np.count_nonzero(dim1)
-                    input_count += nz_count0
-                    output_count += nz_count1
-                    input_total += len(dim0)
-                    output_total += len(dim1) 
+                    filter_count += nz_count0*nz_count1
+                    filter_total += len(dim0)*len(dim1)
+                    total_sparsity += 1-(nz_count0*nz_count1)/(len(dim0)*len(dim1))
+                    total_layer += 1
                     
             elt_sparsity = (total-nonzero)/total
-            input_sparsity = (input_total-input_count)/input_total
-            output_sparsity = (output_total-output_count)/output_total
+            input_sparsity = (filter_total-filter_count)/filter_total
+            output_sparsity = total_sparsity/total_layer
             
             curves[step, 0] = len(train_loader)*epoch+i
             curves[step, 1] = losses.avg
@@ -395,14 +403,14 @@ def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay, cur
             curves[step, 6] = total_losses.avg
             
             step += 1        
-            print('Epoch: [{0}][{1}/{2}]\t'
+            logger.info('Epoch: [{0}][{1}/{2}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
                   'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
                   'Total {total.val:.4f} ({total.avg:.4f})\t'
                   'Reg {reg:.4f}\t'
                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-                  'Prec@5 {top5.val:.3f} ({top5.avg:.3f})\t Sparsity elt: {elt_sparsity:.3f} str: {input_sparsity:.3f}, {output_sparsity:.3f}'.format(
+                  'Prec@5 {top5.val:.3f} ({top5.avg:.3f})\t Sparsity elt: {elt_sparsity:.3f} str: {input_sparsity:.3f} str_avg: {output_sparsity:.3f}'.format(
                    epoch, i, len(train_loader), batch_time=batch_time,
                    data_time=data_time, loss=losses, total=total_losses, 
                    reg=reg, top1=top1, top5=top5, elt_sparsity=elt_sparsity, input_sparsity=input_sparsity, output_sparsity=output_sparsity))
@@ -442,7 +450,7 @@ def validate(val_loader, model, criterion):
             end = time.time()
 
             if i % 100 == 0:
-                print('Test: [{0}/{1}]\t'
+                logger.info('Test: [{0}/{1}]\t'
                       'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                       'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
                       'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
@@ -450,7 +458,7 @@ def validate(val_loader, model, criterion):
                        i, len(val_loader), batch_time=batch_time, loss=losses,
                        top1=top1, top5=top5))
 
-        print(' * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f}'
+        logger.info(' * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f}'
               .format(top1=top1, top5=top5))
 
     return top1.avg, top5.avg
