@@ -208,8 +208,8 @@ def main():
     #    print('Pretrained model evaluation...')
     #    validate(val_loader, model, criterion)
 
-    curves = np.zeros(((args.epochs-args.start_epoch)*(len(train_loader)//args.print_freq),7))
-    valid = np.zeros(((args.epochs-args.start_epoch),3))
+    curves = np.zeros((args.epochs*(len(train_loader)//args.print_freq),7))
+    valid = np.zeros((args.epochs,3))
     step = 0
 
     # optionally resume from a checkpoint
@@ -217,10 +217,14 @@ def main():
         if os.path.exists(args.resume):
             logger.info("=> loading checkpoint '{}'".format(args.resume))
             model.load_state_dict(torch.load(os.path.join(args.resume, 'model.pth')))
-            curves = np.loadtxt(os.path.join(args.resume, 'curves.dat'))
-            valid = np.loadtxt(os.path.join(args.resume, 'valid.dat'))
-            args.start_epoch = np.count_nonzero(valid[:,1])
+            curves_load = np.loadtxt(os.path.join(args.resume, 'curves.dat'))
+            valid_load = np.loadtxt(os.path.join(args.resume, 'valid.dat'))
+            args.start_epoch = np.count_nonzero(valid_load[:,1])
             step = args.start_epoch*(len(train_loader)//args.print_freq)
+            
+            curves[0:step,:] = curves_load[0:step,:]
+            valid[0:args.start_epoch,:] = valid_load[0:args.start_epoch,:]
+            
             logger.info("=> loaded checkpoint '{}' (epoch {})"
                   .format(args.resume, args.start_epoch))
         else:
@@ -335,7 +339,7 @@ def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay, cur
         reg = 0.0
         if decay:
             for name, param in model.named_parameters():
-                if param.requires_grad and len(list(param.size()))>1 and 'weight' in name:
+                if param.requires_grad and len(list(param.size()))>1 and 'weight' in name and torch.sum(torch.abs(param))>0:
                     if reg_type==2:
                         reg += (torch.sum(torch.sqrt(torch.sum(param**2,0)))+torch.sum(torch.sqrt(torch.sum(param**2,1))))/torch.sqrt(torch.sum(param**2))-2
                     elif reg_type==3:
@@ -357,7 +361,7 @@ def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay, cur
         optimizer.zero_grad()
         total_loss.backward()
         optimizer.step()
-
+        device = torch.device("cuda") 
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
@@ -367,10 +371,11 @@ def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay, cur
             filter_count = filter_total = 0
             total_sparsity = total_layer = 0
             for name, p in model.named_parameters():
-                if 'weight' in name:
+                if 'weight' in name and len(list(p.size()))>1:
                     tensor = p.data.cpu().numpy()
                     threshold = args.sensitivity
                     new_mask = np.where(abs(tensor) < threshold, 0, tensor)
+                    #p.data = torch.from_numpy(new_mask).to(device)
                     tensor = np.abs(new_mask)
                     nz_count = np.count_nonzero(tensor)
                     total_params = np.prod(tensor.shape)
@@ -380,15 +385,21 @@ def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay, cur
                     if len(tensor.shape)==4:
                         dim0 = np.sum(np.sum(tensor, axis=0),axis=(1,2))
                         dim1 = np.sum(np.sum(tensor, axis=1),axis=(1,2))
+                        nz_count0 = np.count_nonzero(dim0)
+                        nz_count1 = np.count_nonzero(dim1)
+                        filter_count += nz_count0*nz_count1
+                        filter_total += len(dim0)*len(dim1)
+                        total_sparsity += 1-(nz_count0*nz_count1)/(len(dim0)*len(dim1))
+                        total_layer += 1
                     if len(tensor.shape)==2:
                         dim0 = np.sum(tensor, axis=0)
                         dim1 = np.sum(tensor, axis=1)
-                    nz_count0 = np.count_nonzero(dim0)
-                    nz_count1 = np.count_nonzero(dim1)
-                    filter_count += nz_count0*nz_count1
-                    filter_total += len(dim0)*len(dim1)
-                    total_sparsity += 1-(nz_count0*nz_count1)/(len(dim0)*len(dim1))
-                    total_layer += 1
+                        nz_count0 = np.count_nonzero(dim0)
+                        nz_count1 = np.count_nonzero(dim1)
+                        filter_count += nz_count0*nz_count1
+                        filter_total += len(dim0)*len(dim1)
+                        total_sparsity += 1-(nz_count0*nz_count1)/(len(dim0)*len(dim1))
+                        total_layer += 1
                     
             elt_sparsity = (total-nonzero)/total
             input_sparsity = (filter_total-filter_count)/filter_total
