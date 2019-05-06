@@ -169,7 +169,7 @@ def main():
     train_dataset = datasets.ImageFolder(
         traindir,
         transforms.Compose([
-            transforms.RandomResizedCrop(227),
+            transforms.RandomResizedCrop(224),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             normalize,
@@ -187,7 +187,7 @@ def main():
     val_loader = torch.utils.data.DataLoader(
         datasets.ImageFolder(valdir, transforms.Compose([
             transforms.Resize(256),
-            transforms.CenterCrop(227),
+            transforms.CenterCrop(224),
             transforms.ToTensor(),
             normalize,
         ])),
