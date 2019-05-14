@@ -142,10 +142,15 @@ def main():
         model = torch.nn.parallel.DistributedDataParallel(model)
     else:
         if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
-            model.features = torch.nn.DataParallel(model.features)
+            #model.features = torch.nn.DataParallel(model.features)
             model.cuda()
         else:
             model = torch.nn.DataParallel(model).cuda()
+
+    if args.arch.startswith('alexnet'):
+        input_size = 227
+    else:
+        input_size = 224
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
@@ -169,7 +174,7 @@ def main():
     train_dataset = datasets.ImageFolder(
         traindir,
         transforms.Compose([
-            transforms.RandomResizedCrop(224),
+            transforms.RandomResizedCrop(input_size),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             normalize,
@@ -187,7 +192,7 @@ def main():
     val_loader = torch.utils.data.DataLoader(
         datasets.ImageFolder(valdir, transforms.Compose([
             transforms.Resize(256),
-            transforms.CenterCrop(224),
+            transforms.CenterCrop(input_size),
             transforms.ToTensor(),
             normalize,
         ])),
