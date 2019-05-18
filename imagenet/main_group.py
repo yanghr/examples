@@ -6,6 +6,7 @@ import time
 import warnings
 import numpy as np
 import sys
+sys.path.append('/home/hy128/github/vision/')
 
 import matplotlib
 matplotlib.use("pdf")
@@ -22,9 +23,9 @@ import torch.distributed as dist
 import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
-import torchvision.transforms as transforms
-import torchvision.datasets as datasets
-import torchvision.models as models
+import torchvision_new.transforms as transforms
+import torchvision_new.datasets as datasets
+import torchvision_new.models as models
 from torch.autograd import Variable
 import util
 
@@ -149,8 +150,11 @@ def main():
         model = torch.nn.parallel.DistributedDataParallel(model)
     else:
         if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
-            #model.features = torch.nn.DataParallel(model.features)
-            model.cuda()
+            if args.arch.startswith('alexnetv2'):
+                pass
+            else:    
+                model.features = torch.nn.DataParallel(model.features)
+                model.cuda()
         else:
             model = torch.nn.DataParallel(model).cuda()
 
