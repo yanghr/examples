@@ -142,8 +142,11 @@ def main():
         model = torch.nn.parallel.DistributedDataParallel(model)
     else:
         if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
-            model.features = torch.nn.DataParallel(model.features)
-            model.cuda()
+            if args.arch.startswith('alexnetv2') and args.pretrained:
+                pass
+            else:    
+                model.features = torch.nn.DataParallel(model.features)
+                model.cuda()
         else:
             model = torch.nn.DataParallel(model).cuda()
 
@@ -199,9 +202,6 @@ def main():
         batch_size=256, shuffle=False,
         num_workers=args.workers, pin_memory=True)
 
-    if args.evaluate:
-        validate(val_loader, model, criterion)
-        return
 
 #    if args.pretrained:
 #        print('Pretrained model evaluation...')
@@ -210,17 +210,23 @@ def main():
     device = torch.device("cuda")    
     # Initial training
     print("--- Pruning ---")
+    masks = {}
     for name, p in model.named_parameters():
         if 'weight' in name:
             tensor = p.data.cpu().numpy()
             threshold = args.sensitivity #np.std(tensor) * args.sensitivity
             #print(f'Pruning with threshold : {threshold} for layer {name}')
             new_mask = np.where(abs(tensor) < threshold, 0, tensor)
+            mask = np.where(abs(tensor) < threshold, 0., 1.)
+            masks[name] = torch.from_numpy(mask).float().to(device)
             p.data = torch.from_numpy(new_mask).to(device)        
 
     #util.print_nonzeros(model)
     print('Pruned model evaluation...')
     prec1, prec5 = validate(val_loader, model, criterion)
+    
+    if args.evaluate:
+        return
     
     best_prec1 = prec5
     torch.save(model.state_dict(), os.path.join(save_path, 'finetuned.pth'))
@@ -237,7 +243,7 @@ def main():
         adjust_learning_rate(optimizer, epoch)
 
         # train for one epoch
-        curves,step = train(train_loader, model, criterion, optimizer, epoch, curves, step)
+        curves,step = train(train_loader, model, criterion, optimizer, epoch, curves, step, masks)
 
         # evaluate on validation set
         valid[epoch, 0] = epoch
@@ -297,7 +303,7 @@ def main():
     prec1 = validate(val_loader, model, criterion)
 
 
-def train(train_loader, model, criterion, optimizer, epoch, curves, step):
+def train(train_loader, model, criterion, optimizer, epoch, curves, step, mask):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -331,12 +337,8 @@ def train(train_loader, model, criterion, optimizer, epoch, curves, step):
         loss.backward()
         device = torch.device("cuda") 
         for name, p in model.named_parameters():
-            if 'mask' in name:
-                continue
-            tensor = p.data.cpu().numpy()
-            grad_tensor = p.grad.data.cpu().numpy()
-            grad_tensor = np.where(tensor==0, 0, grad_tensor)
-            p.grad.data = torch.from_numpy(grad_tensor).to(device)
+            if 'weight' in name:
+                p.grad.data = p.grad.data*mask[name]
         
         optimizer.step()
 
