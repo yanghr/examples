@@ -290,7 +290,7 @@ def main():
         fig.savefig(os.path.join(save_path, 'loss-vs-steps.pdf'))
         
         #ax4.set_ylim(bottom=20, top=100)
-        ax3.legend(('Elt_sparsity','Filter_sparsity','Average_sparsity'), loc='lower right')
+        ax3.legend(('Elt_sparsity','Row_sparsity','Column_sparsity'), loc='lower right')
         ax4.legend(('Reg'), loc='lower left')
         fig2.savefig(os.path.join(save_path, 'sparsity-vs-steps.pdf'))
         
@@ -349,14 +349,35 @@ def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay, cur
         if decay:
             for name, param in model.named_parameters():
                 if param.requires_grad and 'feature' in name and 'weight' in name and torch.sum(torch.abs(param))>0:
-                    if reg_type==2:
-                        reg += (torch.sum(torch.sqrt(torch.sum(param**2,0)))+torch.sum(torch.sqrt(torch.sum(param**2,1))))/torch.sqrt(torch.sum(param**2))-2
-                    elif reg_type==3:
-                        reg += ( (torch.sum(torch.sqrt(torch.sum(param**2,0)))**2) + (torch.sum(torch.sqrt(torch.sum(param**2,1)))**2) )/torch.sum(param**2)-2    
-                    elif reg_type==1:    
-                        reg += torch.sum(torch.sqrt(torch.sum(param**2,0)))+torch.sum(torch.sqrt(torch.sum(param**2,1)))
-                    else:
-                        reg = 0.0         
+                    if 'features.module.0' in name: # first layer
+                        if reg_type==2:
+                            reg += torch.sum(torch.sqrt(torch.sum(param**2,1)))/torch.sqrt(torch.sum(param**2))-1
+                        elif reg_type==3:
+                            reg += (torch.sum(torch.sqrt(torch.sum(param**2,1)))**2)/torch.sum(param**2)-1    
+                        elif reg_type==1:    
+                            reg += torch.sum(torch.sqrt(torch.sum(param**2,1)))
+                        else:
+                            reg = 0.0   
+                    elif 'features.module.8' in name: # no group
+                        if reg_type==2:
+                            reg += (torch.sum(torch.sqrt(torch.sum(param**2,0)))+torch.sum(torch.sqrt(torch.sum(param**2,1))))/torch.sqrt(torch.sum(param**2))-2
+                        elif reg_type==3:
+                            reg += ( (torch.sum(torch.sqrt(torch.sum(param**2,0)))**2) + (torch.sum(torch.sqrt(torch.sum(param**2,1)))**2) )/torch.sum(param**2)-2    
+                        elif reg_type==1:    
+                            reg += torch.sum(torch.sqrt(torch.sum(param**2,0)))+torch.sum(torch.sqrt(torch.sum(param**2,1)))
+                        else:
+                            reg = 0.0 
+                    else: # two groups
+                        D = list(param.shape)
+                        (p0,p1) = torch.split(param,D[0]//2,dim=0)
+                        if reg_type==2:
+                            reg += (torch.sum(torch.sqrt(torch.sum(p0**2,0)))+torch.sum(torch.sqrt(torch.sum(p0**2,1))))/torch.sqrt(torch.sum(p0**2))-2 + (torch.sum(torch.sqrt(torch.sum(p1**2,0)))+torch.sum(torch.sqrt(torch.sum(p1**2,1))))/torch.sqrt(torch.sum(p1**2))-2
+                        elif reg_type==3:
+                            reg += ( (torch.sum(torch.sqrt(torch.sum(p0**2,0)))**2) + (torch.sum(torch.sqrt(torch.sum(p0**2,1)))**2) )/torch.sum(p0**2)-2 + ( (torch.sum(torch.sqrt(torch.sum(p1**2,0)))**2) + (torch.sum(torch.sqrt(torch.sum(p1**2,1)))**2) )/torch.sum(p1**2)-2  
+                        elif reg_type==1:    
+                            reg += torch.sum(torch.sqrt(torch.sum(p0**2,0)))+torch.sum(torch.sqrt(torch.sum(p0**2,1)))+torch.sum(torch.sqrt(torch.sum(p1**2,0)))+torch.sum(torch.sqrt(torch.sum(p1**2,1)))
+                        else:
+                            reg = 0.0                       
         total_loss = loss+decay*reg
 
         # measure accuracy and record loss
@@ -377,8 +398,8 @@ def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay, cur
         #break
         if i and i % args.print_freq == 0:
             nonzero = total = 0
-            filter_count = filter_total = 0
-            total_sparsity = total_layer = 0
+            row_count = row_total = 0
+            column_count = column_total = 0
             for name, p in model.named_parameters():
                 if 'feature' in name and 'weight' in name and len(list(p.size()))>1:
                     tensor = p.data.cpu().numpy()
@@ -391,20 +412,23 @@ def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay, cur
                     nonzero += nz_count
                     total += total_params
                     
-                    if len(tensor.shape)==4:
+                    if 'features.module.0' in name or 'features.module.8' in name:
                         dim0 = np.sum(np.sum(tensor, axis=0),axis=(1,2))
-                        dim1 = np.sum(np.sum(tensor, axis=1),axis=(1,2))
-                        nz_count0 = np.count_nonzero(dim0)
-                        nz_count1 = np.count_nonzero(dim1)
-                        filter_count += nz_count0*nz_count1
-                        filter_total += len(dim0)*len(dim1)
-                        total_sparsity += 1-(nz_count0*nz_count1)/(len(dim0)*len(dim1))
-                        total_layer += 1
+                    else:
+                        (t0,t1) = np.split(tensor,2,axis=0)
+                        dim0 = np.sum(np.sum(t0, axis=0),axis=(1,2))+np.sum(np.sum(t1, axis=0),axis=(1,2))
+                    dim1 = np.sum(np.sum(tensor, axis=1),axis=(1,2))
+                    nz_count0 = np.count_nonzero(dim0)
+                    nz_count1 = np.count_nonzero(dim1)
+                    row_count += nz_count0
+                    column_count += nz_count1
+                    row_total += len(dim0)
+                    column_total += len(dim1)
                     
                     
             elt_sparsity = (total-nonzero)/total
-            input_sparsity = (filter_total-filter_count)/filter_total
-            output_sparsity = total_sparsity/total_layer
+            input_sparsity = (row_total-row_count)/row_total
+            output_sparsity = (column_total-column_count)/column_total
             
             curves[step, 0] = len(train_loader)*epoch+i
             curves[step, 1] = losses.avg
@@ -422,10 +446,10 @@ def train(train_loader, model, criterion, optimizer, epoch, reg_type, decay, cur
                   'Total {total.val:.4f} ({total.avg:.4f})\t'
                   'Reg {reg:.4f}\t'
                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-                  'Prec@5 {top5.val:.3f} ({top5.avg:.3f})\t Sparsity elt: {elt_sparsity:.3f} str: {input_sparsity:.3f} str_avg: {output_sparsity:.3f}'.format(
+                  'Prec@5 {top5.val:.3f} ({top5.avg:.3f})\t Sparsity elt: {elt_sparsity:.3f} str: {row_sparsity:.3f} str_avg: {column_sparsity:.3f}'.format(
                    epoch, i, len(train_loader), batch_time=batch_time,
                    data_time=data_time, loss=losses, total=total_losses, 
-                   reg=reg, top1=top1, top5=top5, elt_sparsity=elt_sparsity, input_sparsity=input_sparsity, output_sparsity=output_sparsity))
+                   reg=reg, top1=top1, top5=top5, elt_sparsity=elt_sparsity, row_sparsity=input_sparsity, column_sparsity=output_sparsity))
                    
     return curves, step
 
